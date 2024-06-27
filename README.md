@@ -1,55 +1,37 @@
 Node.js Application with Docker, AWS, CI/CD, and Monitoring
 Project Overview
-This project demonstrates how to containerize a simple Node.js application using Docker, deploy it to an AWS EC2 instance, set up a CI/CD pipeline with GitHub Actions, and implement monitoring with Prometheus and Grafana.
+This project demonstrates how to containerize a simple Node.js application using Docker, deploy it to an AWS EC2 instance, set up a CI/CD pipeline with jenkins, and implement monitoring with Prometheus and Grafana.
 
-Prerequisites
-Before you begin, ensure you have the following installed on your local machine:
-
-Node.js and npm: Node.js
-Docker: Docker
-AWS CLI: AWS CLI
-Elastic Beanstalk CLI: EB CLI
-Step-by-Step Instructions
 Step 1: Launch an EC2 Instance
-Launch an EC2 Instance:
 
+Launch an EC2 Instance:
 Go to the AWS Management Console.
 Navigate to the EC2 Dashboard.
 Click on "Launch Instance".
-Choose the Amazon Linux 2 AMI.
+Choose the ubuntu as AMI.
 Select the t2.micro instance type.
+Create and Download the key pair and save it securely
 Configure the instance details.
 Add storage (default 8 GB).
-Configure the security group to allow SSH (port 22), HTTP (port 80), and custom TCP (port 3000).
+Configure the security group choose all traffic anywhere.
 Review and launch the instance.
-Download the key pair and save it securely.
-Connect to the EC2 Instance:
 
-Use the key pair to connect to your instance via SSH:
-ssh -i "your-key-pair.pem" ec2-user@your-ec2-instance-public-dns
+Connect to the EC2 Instance: click on connect
+
 Update the EC2 Instance:
 
 Once connected, update the package index:
-sudo yum update -y
-Step 2: Set Up Docker on EC2
-Install Docker:
+sudo apt update -y
 
-Install Docker on the EC2 instance:
-sudo amazon-linux-extras install docker
-sudo service docker start
-sudo usermod -a -G docker ec2-user
-Log out and log back in for the changes to take effect.
-Verify Docker Installation:
+Step 2: 
+install docker, docker-compose, jenkins, terraform, awscli, npm, node.js, maven(if need),  
 
-Verify that Docker is installed and running:
-docker --version
-docker info
 Step 3: Create the Web Application
 Set up the project directory:
 
 On the EC2 instance, create a new directory for your project:
-mkdir my-node-app
-cd my-node-app
+mkdir myapp
+cd myapp
 Initialize a Node.js project:
 
 Initialize a new Node.js project and install express:
@@ -73,7 +55,8 @@ Test the application locally:
 
 Run the application:
 node server.js
-Open a web browser and navigate to http://your-ec2-instance-public-dns:3000 to see Hello, DevOps!.
+Open a web browser and navigate to http://your-ec2-instance-public-ip:3000 to see Hello, DevOps!.
+
 Step 4: Containerize the Application with Docker
 Create a Dockerfile:
 
@@ -106,74 +89,70 @@ Run the Docker container:
 Run the Docker container:
 docker run -p 3000:3000 my-node-app
 Open a web browser and navigate to http://your-ec2-instance-public-dns:3000 to see your application running inside a Docker container.
-Step 5: Set Up CI/CD with GitHub Actions
-Create a GitHub repository:
 
-Go to GitHub and create a new repository for your project.
-Push your project files to the GitHub repository.
-Create a GitHub Actions workflow:
+Step 5: Set Up CI/CD pipeline with jenkins
 
-In your project directory, create the following directory structure: .github/workflows.
-Inside the workflows directory, create a file named ci-cd.yml and add the following content:
-name: CI/CD Pipeline
+connect to jenkins server, go to manage jenkins give AWS and docker credentials 
 
-on:
-  push:
-    branches:
-      - main
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v2
-      with:
-        node-version: '14'
-
-    - name: Install dependencies
-      run: npm install
-
-    - name: Run tests
-      run: npm test
-
-    - name: Build Docker image
-      run: docker build -t my-node-app .
-
-    - name: Log in to Docker Hub
-      run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
-
-    - name: Push Docker image to Docker Hub
-      run: docker push ${{ secrets.DOCKER_USERNAME }}/my-node-app
-Add Docker Hub credentials to GitHub Secrets:
-
-Go to your GitHub repository settings, navigate to Secrets, and add the following secrets:
-DOCKER_USERNAME: Your Docker Hub username
-DOCKER_PASSWORD: Your Docker Hub password
-Push the code to GitHub:
-
-Commit and push your code to the main branch of your GitHub repository to trigger the CI/CD pipeline.
-Step 6: Deploy to AWS Elastic Beanstalk
-Install Elastic Beanstalk CLI:
-
-Install the Elastic Beanstalk CLI:
-pip install awsebcli
-Initialize Elastic Beanstalk:
-
-Initialize Elastic Beanstalk for your project:
-eb init -p docker my-node-app
-Follow the prompts to set up your application.
-Create and deploy the application:
-
-Create and deploy your Elastic Beanstalk environment:
-eb create my-node-app-env
-eb open
-This will deploy your Dockerized application to AWS Elastic Beanstalk and open the application URL in your browser.
+pipeline {
+    agent any
+     environment {
+         DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+         AWS_CREDENTIALS = credentials('aws-credentials')
+         AWS_DEFAULT_REGION = 'us-east-1'
+     }
+    stages {
+        stage('clone') {
+            steps {
+                checkout scmGit(branches: [[name: '*/master']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/vommidapuchinni/myapp.git']])
+            }
+        }
+        stage('Build') {
+            steps {
+                script {
+                    dockerImage = docker.build("myapp")
+                }
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'npm install'
+                sh 'npm test'
+            }
+        }
+        stage('Login to DockerHub') {
+            steps {
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }
+        stage('Push Image') {
+            steps {
+                sh 'docker push chinni111/myapp:latest'
+            }
+        }
+        stage('Deploy to AWS') {
+            steps {
+                dir('terraform') {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        sh 'terraform init'
+                        sh 'terraform apply --auto-approve'
+                    }
+                }
+            }
+        }
+        stage('Verify Deployment') { 
+            steps {
+                script {
+                    sh 'aws ec2 describe-instances --region us-east-1'
+                }
+            }
+        }
+    }
+}
+      
 Step 7: Set Up Monitoring and Logging
+
 Create a docker-compose.yml file:
 
 In your project directory, create a file named docker-compose.yml and add the following content to set up Prometheus and Grafana:
@@ -191,6 +170,7 @@ services:
     image: grafana/grafana
     ports:
       - "3000:3000"
+      
 Configure Prometheus:
 
 Create a file named prometheus.yml in your project directory and add the following content:
@@ -205,8 +185,10 @@ Run Docker Compose:
 
 Start the services using Docker Compose:
 docker-compose up -d
+
 Access Grafana at http://localhost:3000 and log in with the default credentials (admin/admin).
 Add Prometheus as a data source in Grafana and start creating dashboards to monitor your application.
+
 Diagrams and Explanations
 1. Application Architecture
           +-----------------------+
@@ -224,15 +206,14 @@ Diagrams and Explanations
           |    Node.js App        |
           +-----------------------+
 2. CI/CD Pipeline
-plaintext
-Copy code
+
       +--------------------------+
-      |      GitHub Repository   |
+      |      jenkins pipeline    |
       +--------------------------+
                   |
                   v
       +--------------------------+
-      | GitHub Actions Workflow  |
+      | docker&aws credentials   |
       +--------------------------+
                   |
                   v
@@ -242,11 +223,11 @@ Copy code
                   |
                   v
       +--------------------------+
-      | AWS EC2 Instance (EB)    |
+      |    AWS EC2 deploy        |
       +--------------------------+
+   
 3. Monitoring and Logging
-plaintext
-Copy code
+
       +--------------------------+
       |       Grafana            |
       +--------------------------+
@@ -261,4 +242,4 @@ Copy code
       |   Node.js App (Metrics)  |
       +--------------------------+
 Conclusion
-By following these detailed steps, you will be able to successfully set up, containerize, deploy, and monitor your web application using AWS EC2, Docker, GitHub Actions, Prometheus, and Grafana.
+By following these detailed steps, you will be able to successfully set up, containerize, deploy, and monitor your web application using AWS EC2, Docker, jenkins pipeline, Prometheus, and Grafana.
